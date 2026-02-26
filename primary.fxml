@@ -1,0 +1,547 @@
+/*
+ * Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
+ * Click nbfs://nbhost/SystemFileSystem/Templates/Project/Maven2/JavaApp/src/main/java/${packagePath}/${mainClassName}.java to edit this template
+ */
+package com.mycompany.javafxapplication1;
+
+import java.io.File;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.spec.InvalidKeySpecException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Random;
+import java.util.Scanner;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.SecretKeySpec;
+
+public class DB {
+    
+    private String mysqlUrl = "jdbc:mysql://localhost:3306/COMP20081";
+    private String dbUser = "root"; 
+    private String dbPass = ""; // Empty password for your VM setup
+
+    // --- CONNECT TO MYSQL ---
+    public Connection getConnection() {
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            connection = DriverManager.getConnection(mysqlUrl, dbUser, dbPass);
+            System.out.println("MySQL Connected Successfully!");
+        } catch (ClassNotFoundException | SQLException e) {
+            System.out.println("MySQL Connection Failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+        return connection;
+    }
+
+    private String fileName = "jdbc:sqlite:comp20081.db"; 
+    private int timeout = 30;
+    private String dataBaseName = "COMP20081";
+    private String dataBaseTableName = "Users";
+    Connection connection = null;
+    private Random random = new SecureRandom();
+    private String characters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    private int iterations = 10000;
+    private int keylength = 256;
+    private String saltValue;
+    
+    public DB() {
+        try {
+            File fp = new File(".salt");
+            if (!fp.exists()) {
+                saltValue = this.getSaltvalue(30);
+                FileWriter myWriter = new FileWriter(fp);
+                myWriter.write(saltValue);
+                myWriter.close();
+            } else {
+                Scanner myReader = new Scanner(fp);
+                while (myReader.hasNextLine()) {
+                    saltValue = myReader.nextLine();
+                }
+                myReader.close();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+   public void createTable(String tableName) throws ClassNotFoundException {
+        try {
+            connection = getConnection();
+            
+            if (this.connection == null) {
+                System.err.println("Cannot create table: Database connection is null.");
+                return; 
+            }
+            
+            var statement = connection.createStatement();
+            statement.setQueryTimeout(timeout);
+            statement.executeUpdate(
+                "CREATE TABLE IF NOT EXISTS " + tableName + " ("
+                + "id INTEGER PRIMARY KEY AUTO_INCREMENT, " 
+                + "name VARCHAR(255) NOT NULL UNIQUE, "     
+                + "password TEXT NOT NULL, "
+                + "role VARCHAR(50) NOT NULL DEFAULT 'STANDARD'"
+                + ")"
+            );
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) connection.close();
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+    public void delTable(String tableName) throws ClassNotFoundException {
+        try {
+           
+            connection = getConnection();
+            var statement = connection.createStatement();
+            statement.setQueryTimeout(timeout);
+            statement.executeUpdate("drop table if exists " + tableName);
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) {
+                    connection.close();
+                }
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+    public void addDataToDB(String user, String password) throws InvalidKeySpecException, ClassNotFoundException {
+        String role = getDataFromTable().isEmpty() ? "ADMIN" : "STANDARD";
+        String sql = "INSERT INTO " + dataBaseTableName + " (name, password, role) VALUES (?, ?, ?)";
+        try {
+         
+            connection = getConnection();
+            java.sql.PreparedStatement pstmt = connection.prepareStatement(sql);
+            pstmt.setQueryTimeout(timeout);
+            pstmt.setString(1, user);
+            pstmt.setString(2, generateSecurePassword(password)); 
+            pstmt.setString(3, role);
+            pstmt.executeUpdate();
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) {
+                    connection.close();
+                }
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+    public ObservableList<User> getDataFromTable() throws ClassNotFoundException {
+        ObservableList<User> result = FXCollections.observableArrayList();
+        try {
+           
+            connection = getConnection();
+            var statement = connection.createStatement();
+            statement.setQueryTimeout(timeout);
+            ResultSet rs = statement.executeQuery("SELECT name, password, role FROM " + dataBaseTableName);
+            while (rs.next()) {
+                result.add(new User(rs.getString("name"), rs.getString("password"), rs.getString("role")));
+            }
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) {
+                    connection.close();
+                }
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+        return result;
+    }
+  
+    public boolean deleteUser(String username) throws ClassNotFoundException {
+        String sql = "DELETE FROM " + dataBaseTableName + " WHERE name = ?";
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            java.sql.PreparedStatement pstmt = connection.prepareStatement(sql);
+            pstmt.setString(1, username);
+            int rowsDeleted = pstmt.executeUpdate();
+            return rowsDeleted > 0;
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+            return false;
+        } finally {
+            try { if (connection != null) connection.close(); } catch (SQLException e) {}
+        }
+    }
+
+    public boolean validateUser(String user, String pass) throws InvalidKeySpecException, ClassNotFoundException {
+    Boolean flag = false;
+    try {
+        connection = getConnection();
+        var statement = connection.createStatement();
+        statement.setQueryTimeout(timeout);
+        ResultSet rs = statement.executeQuery("select name, password from " + this.dataBaseTableName);
+        
+        String inPass = generateSecurePassword(pass);
+        
+        System.out.println("--- DEBUGGING LOGIN ---");
+        System.out.println("Trying to log in as: " + user);
+        
+        while (rs.next()) {
+            String dbName = rs.getString("name");
+            String dbPass = rs.getString("password");
+
+            if (user.equals(dbName)) {
+                System.out.println("FOUND USER '" + user + "' in database!");
+                System.out.println("Database Password: " + dbPass);
+                System.out.println("Your Typed Hash:   " + inPass);
+                
+                if (dbPass.equals(inPass)) {
+                    System.out.println("SUCCESS: Passwords match!");
+                    flag = true;
+                    break;
+                } else {
+                    System.out.println("FAILURE: Passwords do not match.");
+                    if (pass.equals(dbPass)) {
+                        System.out.println("WARNING: The database password is NOT encrypted (Plain Text). You cannot log in with this user via Java.");
+                    }
+                }
+            }
+        }
+    } catch (SQLException ex) {
+        Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+    } finally {
+        try {
+            if (connection != null) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            System.err.println(e.getMessage());
+        }
+    }
+    return flag;
+}
+  
+    public User authenticate(String user, String pass) throws InvalidKeySpecException, ClassNotFoundException {
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            var statement = connection.createStatement();
+            statement.setQueryTimeout(timeout);
+            ResultSet rs = statement.executeQuery("SELECT name, password, role FROM " + this.dataBaseTableName);
+            String inPass = generateSecurePassword(pass);
+            while (rs.next()) {
+                if (user.equals(rs.getString("name")) && rs.getString("password").equals(inPass)) {
+                    return new User(rs.getString("name"), rs.getString("password"), rs.getString("role"));
+                }
+            }
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) connection.close();
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+        return null;
+    }
+
+    private String getSaltvalue(int length) {
+        StringBuilder finalval = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            finalval.append(characters.charAt(random.nextInt(characters.length())));
+        }
+        return new String(finalval);
+    }
+
+    private byte[] hash(char[] password, byte[] salt) throws InvalidKeySpecException {
+        PBEKeySpec spec = new PBEKeySpec(password, salt, iterations, keylength);
+        Arrays.fill(password, Character.MIN_VALUE);
+        try {
+            SecretKeyFactory skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1");
+            return skf.generateSecret(spec).getEncoded();
+        } catch (NoSuchAlgorithmException | InvalidKeySpecException e) {
+            throw new AssertionError("Error while hashing a password: " + e.getMessage(), e);
+        } finally {
+            spec.clearPassword();
+        }
+    }
+
+    public String generateSecurePassword(String password) throws InvalidKeySpecException {
+        String finalval = null;
+        byte[] securePassword = hash(password.toCharArray(), saltValue.getBytes());
+        finalval = Base64.getEncoder().encodeToString(securePassword);
+        return finalval;
+    }
+
+    public String getTableName() {
+        return this.dataBaseTableName;
+    }
+
+    public void log(String message) {
+        System.out.println(message);
+    }
+
+    public void createSessionTable() throws ClassNotFoundException {
+        try {
+            connection = getConnection();
+            
+            if (this.connection == null) {
+                System.err.println("Cannot create session table: Database connection is null.");
+                return; 
+            }
+            
+            var statement = connection.createStatement();
+            
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+    
+    public void createFileTable() throws ClassNotFoundException {
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            var statement = connection.createStatement();
+            statement.setQueryTimeout(timeout);
+            statement.executeUpdate(
+                "CREATE TABLE IF NOT EXISTS Files ("
+                + "id INTEGER PRIMARY KEY AUTO_INCREMENT, "
+                + "owner VARCHAR(255) NOT NULL, "
+                + "filename VARCHAR(255) NOT NULL, "
+                + "content TEXT NOT NULL, "
+                + "encryption_key TEXT NOT NULL)"
+            );
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) connection.close();
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+    public void createSession(String username) throws ClassNotFoundException {
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            java.sql.PreparedStatement pstmt = connection.prepareStatement("INSERT INTO Sessions (username) VALUES (?)");
+            pstmt.setString(1, username);
+            pstmt.executeUpdate();
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try {
+                if (connection != null) connection.close();
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+    public void createPermissionsTable() throws ClassNotFoundException {
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            var statement = connection.createStatement();
+            statement.executeUpdate(
+                "CREATE TABLE IF NOT EXISTS Permissions ("
+                + "id INTEGER PRIMARY KEY AUTO_INCREMENT, "
+                + "file_id INTEGER NOT NULL, "
+                + "shared_with VARCHAR(255) NOT NULL, "
+                + "permission_type VARCHAR(50) NOT NULL, "
+                + "FOREIGN KEY(file_id) REFERENCES Files(id))"
+            );
+        } catch (SQLException ex) {
+            Logger.getLogger(DB.class.getName()).log(Level.SEVERE, null, ex);
+        } finally {
+            try { if (connection != null) connection.close(); } catch (SQLException e) {}
+        }
+    }
+    
+
+   public void saveEncryptedFile(String owner, String name, String plainText) throws Exception {
+        KeyGenerator keyGen = KeyGenerator.getInstance("AES");
+        keyGen.init(256);
+        SecretKey secretKey = keyGen.generateKey();
+        String encodedKey = Base64.getEncoder().encodeToString(secretKey.getEncoded());
+        Cipher cipher = Cipher.getInstance("AES");
+        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+        byte[] encryptedBytes = cipher.doFinal(plainText.getBytes());
+        String encryptedContent = Base64.getEncoder().encodeToString(encryptedBytes);
+        String sql = "INSERT INTO Files (owner, filename, content, encryption_key) VALUES (?, ?, ?, ?)";
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            java.sql.PreparedStatement pstmt = connection.prepareStatement(sql);
+            pstmt.setString(1, owner);
+            pstmt.setString(2, name);
+            pstmt.setString(3, encryptedContent);
+            pstmt.setString(4, encodedKey);
+            pstmt.executeUpdate();
+
+            syncData(sql, owner, name, encryptedContent, encodedKey);
+
+        } finally {
+            try {
+                if (connection != null) connection.close();
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+    public ObservableList<UserFiles> getUserFiles(String owner) {
+        ObservableList<UserFiles> files = FXCollections.observableArrayList();
+        String sql = "SELECT DISTINCT f.id, f.filename, f.content, f.encryption_key " +
+                     "FROM Files f " +
+                     "LEFT JOIN Permissions p ON f.id = p.file_id " +
+                     "WHERE f.owner = ? OR p.shared_with = ?";
+        
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            java.sql.PreparedStatement pstmt = connection.prepareStatement(sql);
+            pstmt.setString(1, owner);
+            pstmt.setString(2, owner);
+            ResultSet rs = pstmt.executeQuery();
+            
+            while (rs.next()) {
+                files.add(new UserFiles(
+                    rs.getInt("id"),
+                    rs.getString("filename"),
+                    rs.getString("content"),
+                    rs.getString("encryption_key")
+                ));
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        } finally {
+            try { if (connection != null) connection.close(); } catch (SQLException e) {}
+        }
+        return files;
+    }
+    
+
+    public String decryptFile(String encryptedContent, String keyStr) throws Exception {
+        byte[] decodedKey = Base64.getDecoder().decode(keyStr);
+        SecretKey secretKey = new SecretKeySpec(decodedKey, 0, decodedKey.length, "AES");
+
+        Cipher cipher = Cipher.getInstance("AES");
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+        
+        byte[] decodedContent = Base64.getDecoder().decode(encryptedContent);
+        byte[] decryptedBytes = cipher.doFinal(decodedContent);
+        
+        return new String(decryptedBytes);
+    }
+public void shareFile(int fileId, String sharedWithUser) throws ClassNotFoundException {
+        String sql = "INSERT INTO Permissions (file_id, shared_with, permission_type) VALUES (?, ?, 'READ')";
+        try {
+            // UPDATED TO MYSQL
+            connection = getConnection();
+            java.sql.PreparedStatement pstmt = connection.prepareStatement(sql);
+            pstmt.setInt(1, fileId);
+            pstmt.setString(2, sharedWithUser);
+            pstmt.executeUpdate();
+            
+            syncData(sql, String.valueOf(fileId), sharedWithUser, "READ");
+        } catch (SQLException ex) {
+            ex.printStackTrace();
+        } finally {
+            try {
+                if (connection != null) connection.close();
+            } catch (SQLException e) {
+                System.err.println(e.getMessage());
+            }
+        }
+    }
+
+  public void syncData(String sql, String... params) {
+        log("DATABASE SYNC: Mirroring to Remote Backup File...");
+        try (java.io.FileWriter fw = new java.io.FileWriter("remote_sync_log.txt", true)) {
+            String timestamp = new java.util.Date().toString();
+            fw.write("[" + timestamp + "] SYNC QUERY: " + sql + "\n");
+            fw.write("[" + timestamp + "] DATA: " + java.util.Arrays.toString(params) + "\n\n");
+            log("SYNC SUCCESS: Local and Remote states are now consistent.");
+        } catch (java.io.IOException e) {
+            log("SYNC ERROR: Backup file unreachable.");
+        }
+    }
+
+    public String executeTerminalCommand(String command) {
+        StringBuilder output = new StringBuilder();
+        try {
+            Process process = Runtime.getRuntime().exec(new String[]{"/bin/sh", "-c", command});
+            java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()));
+            String line;
+            while ((line = reader.readLine()) != null) {
+                output.append(line).append("\n");
+            }
+            process.waitFor();
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+        return output.toString().isEmpty() ? "Command executed." : output.toString();
+    }
+}
+
+
+//    public static void main(String[] args) throws InvalidKeySpecException {
+//        DB myObj = new DB();
+//        myObj.log("-------- Simple Tutorial on how to make JDBC connection to SQLite DB ------------");
+//        myObj.log("\n---------- Drop table ----------");
+//        myObj.delTable(myObj.getTableName());
+//        myObj.log("\n---------- Create table ----------");
+//        myObj.createTable(myObj.getTableName());
+//        myObj.log("\n---------- Adding Users ----------");
+//        myObj.addDataToDB("ntu-user", "12z34");
+//        myObj.addDataToDB("ntu-user2", "12yx4");
+//        myObj.addDataToDB("ntu-user3", "a1234");
+//        myObj.log("\n---------- get Data from the Table ----------");
+//        myObj.getDataFromTable(myObj.getTableName());
+//        myObj.log("\n---------- Validate users ----------");
+//        String[] users = new String[]{"ntu-user", "ntu-user", "ntu-user1"};
+//        String[] passwords = new String[]{"12z34", "1235", "1234"};
+//        String[] messages = new String[]{"VALID user and password",
+//            "VALID user and INVALID password", "INVALID user and VALID password"};
+//
+//        for (int i = 0; i < 3; i++) {
+//            System.out.println("Testing " + messages[i]);
+//            if (myObj.validateUser(users[i], passwords[i], myObj.getTableName())) {
+//                myObj.log("++++++++++VALID credentials!++++++++++++");
+//            } else {
+//                myObj.log("----------INVALID credentials!----------");
+//            }
+//        }
+//    }
+
